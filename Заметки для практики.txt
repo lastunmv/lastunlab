@@ -1,0 +1,267 @@
+1. Создание ВМ через CLI:
+
+Создать сеть:
+Создаем ВС
+yc vpc network create --name lab-network --description "network for my lab"
+Создаем виртуальную подсеть в нашей сети 
+yc vpc subnet create --name lab-subnet --description "subnet for my lab" --range 192.168.0.0/24 --network-name lab-network
+Добавляем публичные IP-адреса 
+yc vpc address create --name vpn --description "open-vpn" --external-ipv4 zone=ru-central1-b
+yc vpc address create --name prometheus --description "prometheus" --external-ipv4 zone=ru-central1-b
+
+C:\Users\lastunmv>yc vpc addresses list
++----------------------+------------+---------------+----------+-------+
+|          ID          |    NAME    |    ADDRESS    | RESERVED | USED  |
++----------------------+------------+---------------+----------+-------+
+| e2ldribas32p19g8o4rr | prometheus | 51.250.98.4   | true     | false |
+| e2ll7i0iva200d640nvn | vpn        | 158.160.2.252 | true     | false |
++----------------------+------------+---------------+----------+-------+
+
+Так как YC разрешил взять только два статических публичных адреса, я закрепил их для rometheus и openvpn, подключение по ssh на ca седлал через сервер openvpn по порту 23.
+
+Создать ВМ:
+1) yc compute instance create --name open-vpn --description "open-vpn" --hostname vpn. --cores 2 --memory 2GB --core-fraction 20 --network-interface address=192.168.0.4,subnet-name=lab-subnet,nat-address=158.160.2.252 --ssh-key C:\Users\lastunmv\.ssh\lab\id_rsa.pub --create-boot-disk name=open-vpn,size=8GB,image-id=fd8hnnsnfn3v88bk0k1o --preemptible
+2) yc compute instance create --name prometheus --description "prometheus" --hostname prometheus. --cores 2 --memory 2GB --core-fraction 20 --network-interface address=192.168.0.5,subnet-name=lab-subnet,nat-address=51.250.98.4 --ssh-key C:\Users\lastunmv\.ssh\lab\id_rsa.pub --create-boot-disk name=prometheus,size=8GB,image-id=fd8hnnsnfn3v88bk0k1o --preemptible
+3) yc compute instance create --name ca --description "ca" --hostname ca. --cores 2 --memory 2GB --core-fraction 20 --network-interface address=192.168.0.3,subnet-name=lab-subnet,nat-ip-version=ipv4 --ssh-key C:\Users\lastunmv\.ssh\lab\id_rsa.pub --create-boot-disk name=ca,size=8GB,image-id=fd8hnnsnfn3v88bk0k1o --preemptible
+
++----------------------+------------+---------------+---------+----------------+-------------+
+|          ID          |    NAME    |    ZONE ID    | STATUS  |  EXTERNAL IP   | INTERNAL IP |
++----------------------+------------+---------------+---------+----------------+-------------+
+| epd0un18as7hdpkltoid | ca         | ru-central1-b | RUNNING | 158.160.30.159 | 192.168.0.3 |
+| epd1u46d9ojbb894se9o | open-vpn   | ru-central1-b | RUNNING | 158.160.2.252  | 192.168.0.4 |
+| epd8esftk2jcup0jme2p | prometheus | ru-central1-b | RUNNING | 51.250.98.4    | 192.168.0.5 |
++----------------------+------------+---------------+---------+----------------+-------------+
+
+Виртуальные машины создаются с пользователем yc-user. Далее необходимо перебросить скрипт первоначальной инициализации init_vm.sh в /home/yc-user и запустить его на каждой машине.
+
+Настройка сервера CA:
+Установим easy-rsa
+sudo apt-get install easy-rsa
+
+Скопируем папку с файлами easy-rsa в домашнюю директорию. Поменяем пользователя и дадим полные права для пользователя 
+sudo cp -r /usr/share/easy-rsa /home/caadmin/
+sudo chown -R caadmin:caadmin ~/easy-rsa/
+sudo chmod -R 700 easy-rsa/
+
+Поменяем строки в /home/caadmin/easy-rsa/vars.example
+set_var EASYRSA_REQ_COUNTRY     "RUS"
+set_var EASYRSA_REQ_PROVINCE    "HMAO-Ugra"
+set_var EASYRSA_REQ_CITY        "HM"
+set_var EASYRSA_REQ_ORG "lastunlab"
+set_var EASYRSA_REQ_EMAIL       "lastunlab@ya.ru"
+set_var EASYRSA_REQ_OU          "IT"
+
+После переименуем файл в vars
+mv /home/caadmin/easy-rsa/vars.example /home/caadmin/easy-rsa/vars
+
+Перейдем в папку easy-rsa и создадим инфраструктуру открытых ключей(PKI)
+./easyrsa init-pki
+
+Сгенерируем CA(пароль-123)
+./easyrsa build-ca
+
+Сгенерируем сертификат и ключ для сервера openvpn
+./easyrsa gen-req vpnserver nopass
+
+Подпишем нашим CA
+./easyrsa sign-req server vpnserver
+
+Скопируем на сервер vpn ключ и сертификат для дальнейшего использования 
+scp -i ~/id_rsa /home/caadmin/easy-rsa/pki/issued/vpnserver.crt vpnadmin@192.168.0.4:/home/vpnadmin
+scp -i ~/id_rsa /home/caadmin/easy-rsa/pki/privet/vpnserver.key vpnadmin@192.168.0.4:/home/vpnadmin
+
+Таким же образом сгенерируем и отправим на сервер vpn файлы для клиента clietnt1, разница в подписании
+./easyrsa sign-req client client1
+
+Соберем deb пакет с помощью dh-make и devscripts
+В пакет добавим /home/caadmin/easy-rsa
+
+
+Настройка VPN:
+apt-get install -y openvpn
+Копируем ключи и сертификаты для сервера и сертификат CA
+sudo mv vpnserver.key vpnserver.crt ca.crt /etc/openvpn/server/
+Копируем файл конфигурации в etc 
+sudo cp /usr/share/doc/openvpn/examples/sample-config-files/server.conf /etc/openvpn/server/
+
+Файл конфигурации:
+port 1194
+proto udp
+dev tun
+ca ca.crt
+cert vpnserver.crt
+key vpnserver.key  # This file should be kept secret
+dh none
+server 10.8.0.0 255.255.255.0
+ifconfig-pool-persist /var/log/openvpn/ipp.txt
+push "redirect-gateway def1 bypass-dhcp"
+keepalive 10 120
+tls-crypt ta.key # This file is secret
+cipher AES-256-GCM
+auth SHA256
+user nobody
+group nobody
+persist-key
+persist-tun
+status /var/log/openvpn/openvpn-status.log
+verb 3
+explicit-exit-notify 1
+
+Создадим группу nobody для запуска с пониженными привилегиями 
+
+Создадим в домашней директории пользователся vpaadmin директорию clients для создания конфигурационных файлов клиента, перенесем туда файлы make-config.sh и base.config 
+clients/
+├── base.conf
+├── files
+│   └── client1.ovpn
+├── keys
+│   ├── ca.crt
+│   └── ta.key
+└── make-config.sh
+
+Файл конфигурации baseconfig:
+client
+dev tun
+proto udp
+remote 158.160.2.252 1194
+resolv-retry infinite
+nobind
+user nobody
+group nobody
+persist-key
+persist-tun
+remote-cert-tls server
+cipher AES-256-GCM
+auth SHA256
+key-direction 1
+verb 3
+
+настройки нат(добавил в init_vm.sh) 
+sudo iptables -A INPUT -i eth0 -m state --state NEW -p udp --dport 1194 -j ACCEPT
+sudo iptables -A INPUT -i tun+ -j ACCEPT
+sudo iptables -A FORWARD -i tun+ -j ACCEPT
+sudo iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o eth0 -j MASQUERADE
+
+Пересобрал пакет с openvpn. В нем добавил файл конфигурации сервера и домашнюю директорию clients. Поправил preinst.sh postinst.sh и postrm.sh.
+
+
+Настройка prometheus:
+Установим программы: 
+sudo apt-get install prometheus prometheus-alertmanager prometheus-node-exporter prometheus-blackbox-exporter
+На сервере CA выпустим и подпишем сертификат и ключ для сервера.
+
+Загрузим файл конфигурации для базовой аутентификации и TLS
+ curl -O https://raw.githubusercontent.com/prometheus/prometheus/main/documentation/examples/web-config.yml
+Сгенерируем хэш пароля(Rbv$5dn!)   
+mkpasswd -m bcrypt -R 10
+Впишем данные в файл (сертификат, ключ, пользователя(admin) и хэш пароля). Переименуем в web.yml и перенесем в директорию /etc/prometheus/
+
+Поменяем владельца для файлов и назначим права
+cd /etc/prometheus/
+sudo chown prometheus:prometheus web.yml prometheus.crt prometheus.key
+sudo chmod 700 web.yml prometheus.crt prometheus.key
+
+Поменяем в файле /etc/default/prometheus строчку 
+ARGS=""
+на
+ARGS='--web.config.file="/etc/prometheus/web.yml"'
+
+Добавил в prometheus.yml job для node-exporter
+Добавил провило iptables в для запросов к exporter(добавил в скрипт init_vm.sh).
+iptables -A OUTPUT -p tcp -d 192.168.0.3/32 --dport 9100 -j ACCEPT -m comment --comment node_exporter_ca
+iptables -A OUTPUT -p tcp -d 192.168.0.4/32 --dport 9100 -j ACCEPT -m comment --comment node_exporter_vpn
+
+Установка node-exporter на CA и VPN и добавим правило на 9100 в iptables. (добавил в скрипт init_vm.sh) 
+apt-get install -y prometheus-node-exporter
+iptables -A INPUT -p tcp -s 192.168.0.5/32 --dport 9100 -j ACCEPT -m comment --comment node_exporter
+
+Установка prometheus-blackbox-exporter на сервер prometheus для проверки доступности сервера VPN из интернет
+sudo apt-get install prometheus-blackbox-exporter (добавил в скрипт init_vm.sh)
+
+sudo apt-get install node-exporter
+И openvpn-exporter на сервер VPN(добавил в скрипт init_vm.sh).
+
+Установка openvpn-exporter
+Скачать архив и разархивировать
+curl -O -L https://github.com/kumina/openvpn_exporter/archive/refs/tags/v0.3.0.tar.gz
+tar -xzf v0.3.0.tar.gz
+sudo apt-get install -y golang (добавить в скрипт init_vm для vpnserver)
+cd ~/openvpn_exporter-0.3.0
+Поправить путь к лог фалу в main.go  (openvpnStatusPaths = flag.String("openvpn.status_paths", "/var/log/openvpnstatus.log", "Paths at which OpenVPN places its status files."))
+go build main.go
+Получим бинарный main
+Переименуем vpn_exporter и поместим к остальным программам /usr/bin/
+sudo mv main /usr/bin/openvpn_exporter
+создадим отдельную группу и пользователя для запуска экспортера 
+sudo addgroup 
+sudo addgroup --system -q openvpn_exporter
+sudo adduser --system --home /usr/share/openvpn_exporter --no-create-home --ingroup openvpn_exporter --disabled-password --shell /bin/false openvpn_exporter
+Поменяем владельца для лог файла и права 
+sudo сhown openvpn_exporter:openvpn_exporter /var/log/openvpn/openvpn-status.log
+sudo chmod 660 /var/log/openvpn/openvpn-status.log
+
+Создадим юнит
+sudo vim /etc/systemd/system/prometheus-openvpn-exporter.service
+
+[Unit]
+Description=Prometheus openvpn exporter
+Documentation=https://github.com/kumina/openvpn_exporter
+After=network.target
+
+[Service]
+Restart=on-failure
+User=openvpn_exporter
+Group=openvpn_exporter
+ExecStart=/usr/bin/openvpn_exporter
+
+[Install]
+WantedBy=multi-user.target
+
+добавляем unit 
+systemctl -f enable  prometheus-openvpn-exporter.service
+Добавим правило в iptables
+sudo iptables -A INPUT -p tcp --dport 9176 -s 192.168.0.5/32 -j ACCEPT -m comment --comment prometheus_openvpn_exporter (добавить в скрипт init_vm.sh)
+
+Установим prometheus-blackbox-eporter что бы пинговать vpn сервер по "белому" IP
+sudo apt-get install prometheus-blackbox-exporter
+
+Добавить все targets в prometheus.yml
+
+Создать файл /etc/prometheus/rules.yml
+sudo vim /etc/prometheus/rules.yml
+
+Вписать настройки для SMTP в alertmanager.yml
+global:
+route:
+  group_by: ['alertname']
+  group_wait: 30s
+  group_interval: 10m
+  repeat_interval: 3h
+  receiver: 'email'
+receivers:
+- name: 'email'
+  email_configs:
+  - to: mishan987@gmail.com
+    from: mishan987@gmail.com
+    smarthost: smtp.gmail.com:465
+    auth_username: mishan987@gmail.com
+    auth_identity: mishan987@gmail.com
+    auth_password: klzh rvhh suyu gczo
+    require_tls: false
+
+Добавил правило в iptables для отправки SMTP
+sudo iptables -A OUTPUT -p tcp --dport 465 -j ACCEPT -m comment --comment SMTP (добавить в скрипт init_vm.sh)
+
+Пересобрал пакет prometheus. Поправил preinst на проверку сертификатов, в postinst копирование сертификатов в /etc/prometheus/. Добавил свои файлы конфигурации в /etc/prometheus/: prometheus.yml web.yml rules.yml. И /etc/default/prometheus 
+
+Пересобрал пакет prometheus-alertmanager. Добавил свой файлы конфигурации в /etc/prometheus/: alertmanager.yml
+
+
+Установим grafana из заранее скаченного deb пакета. 
+Перезапустим ее и добавим unit в инициализацию
+sudo systemctl restart grafana-server.service
+sudo systemctl enable grafana-server.service
+
+Добавим в iptables правило(Добавил в init_vm)
+sudo iptables -A INPUT -p tcp --dport 3000 -j ACCEPT -m comment --comment grafana
+
