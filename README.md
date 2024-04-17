@@ -76,4 +76,4 @@ yc compute instance get my-yc-instance
   + Установить Grafana из deb пакета grafana-enterprise_10.4.2_amd64.deb.
 
 **Готово, инфраструктура готова к работе!**
-
+![инфраструктура и потоки данных](https://github.com/lastunmv/lastunlab/blob/ffdc6e4a0921fcd551e43f234fbedf6a49ecea6b/%D0%98%D0%BD%D1%80%D0%B0%D1%81%D1%82%D1%80%D1%83%D0%BA%D1%82%D1%83%D1%80%D0%B0%20%D0%B8%20%D0%BF%D0%BE%D1%82%D0%BE%D0%BA%D0%B8%20%D0%B4%D0%B0%D0%BD%D0%BD%D1%8B%D1%85.png)
