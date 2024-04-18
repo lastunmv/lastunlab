@@ -49,7 +49,7 @@ yc compute instance create --name ca --description "ca" --hostname ca. --cores 2
 ```
 yc compute instance get my-yc-instance
 ```
-5) Все ВМ создаются с пользователем yc-user. Используя закрытый ключ, необходимо скопировать скрипт инициализации init_vm.sh в домашнюю директорию пользователя yc-user и запустить данный скрипт из под sudo на каждой ВМ. После выполнения скрипта пользователь yc-user удаляется. Для дальнейшей работы с серверами vpn, ca и prometheus скриптом будут созданы пользователи vpnadmin, caadmin и prometheusadmin соответственно.
+5) Все ВМ создаются с пользователем yc-user. Используя закрытый ключ, необходимо скопировать скрипт инициализации [init_vm.sh](https://github.com/lastunmv/lastunlab/blob/c9e8c2128db5ccbbe8b9f56daa7b65665819249c/init_vm.sh) в домашнюю директорию пользователя yc-user и запустить данный скрипт из под sudo на каждой ВМ. После выполнения скрипта пользователь yc-user удаляется. Для дальнейшей работы с серверами vpn, ca и prometheus скриптом будут созданы пользователи vpnadmin, caadmin и prometheusadmin соответственно.
 
 **Настройка серверов:**
 1) ***Настройка ca серверa:***
