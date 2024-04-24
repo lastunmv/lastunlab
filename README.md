@@ -75,5 +75,27 @@ yc compute instance get my-yc-instance
   + Установить Prometheus-alertmanager из deb пакета prometheus-alertmanager-lab_0.23.0_amd64.deb.
   + Установить Grafana из deb пакета grafana-enterprise_10.4.2_amd64.deb.
 
-**Готово, инфраструктура готова к работе!**
+**Схема готовой инфраструктуры:**
 ![инфраструктура и потоки данных](https://github.com/lastunmv/lastunlab/blob/ffdc6e4a0921fcd551e43f234fbedf6a49ecea6b/%D0%98%D0%BD%D1%80%D0%B0%D1%81%D1%82%D1%80%D1%83%D0%BA%D1%82%D1%83%D1%80%D0%B0%20%D0%B8%20%D0%BF%D0%BE%D1%82%D0%BE%D0%BA%D0%B8%20%D0%B4%D0%B0%D0%BD%D0%BD%D1%8B%D1%85.png)
+
+**Генерация конфигурационного файла клиента для подключения к VPN**
+1) Скопировать [скрипт](client_keygen.sh) для выпуска клиентского сертификата и ключа на сервер ***ca*** в рабочую деректорию /easy-rsa, назначить владельца и дать права на исполнение:
+   ```console
+   cd easy-rsa
+   ```
+   ```console
+   sudo chown caadmin:caadmin client_keygen.sh
+   ```
+   ```console
+   sudo chmod 500 client_keygen.sh
+   ```
+2) Сгенерировать сертификат и ключ для клиента запустив скрипт:
+   ```console
+   ./client_keygen.sh [имя клиента]
+   ```
+   Скрипт автоматически скопирует файлы в рабочую директорию сервера ***vpn***
+3) На сервере ***vpn*** перейти в директорию /home/vpnadmin/cliets сгенерировать конфигурационный файл:
+   ```console
+   ./make_config.sh [имя клиента]
+   ```
+   файл конфигурации будет находится в директории /home/vpnadmin/cliets/files. Далее его необходимо передать клиенту для подключения к VPN.
